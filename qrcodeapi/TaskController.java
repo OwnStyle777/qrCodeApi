@@ -1,27 +1,16 @@
 package qrcodeapi;
 
-import com.google.zxing.BarcodeFormat;
-import com.google.zxing.WriterException;
-import com.google.zxing.client.j2se.MatrixToImageWriter;
-import com.google.zxing.common.BitMatrix;
-import com.google.zxing.qrcode.QRCodeWriter;
-import org.apache.catalina.LifecycleState;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
+
 
 
 @RestController
-public class TaskController {
-
+public class TaskController implements ErrorMessages {
+    private final QRCodeImageService qrcodeService = new QRCodeImageService();
 
     @GetMapping("/api/health")
     public ResponseEntity healthStatus() {
@@ -30,59 +19,37 @@ public class TaskController {
     }
 
     @GetMapping("/api/qrcode")
-    public ResponseEntity<?> getImage(String contents, int size, String type) {
+    public ResponseEntity<?> getImage(@RequestParam(required = false) String contents,
+                                      @RequestParam(required = false, defaultValue = "250") int size,
+                                      @RequestParam(required = false, defaultValue = "png") String type,
+                                      @RequestParam(required = false, defaultValue = "L") String correction) {
 
         if (contents.isBlank()) {
-
-            String errorMessage = "Contents cannot be null or blank";
-            return ResponseEntity
-                    .badRequest()
-                    .body("{\"error\": \"" + errorMessage + "\"}");
+            return nullOrBlank();
         }
 
-        if (size <= 350 && size >= 150) {
-
-            BufferedImage bufferedImage = createImage(contents, size);
-
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            if (type.equals("png") || type.equals("gif") || type.equals("jpeg")) {
-                try {
-                    ImageIO.write(bufferedImage, type, outputStream);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
-                ByteArrayResource resource = new ByteArrayResource(outputStream.toByteArray());
-
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.parseMediaType("image/" + type.toLowerCase()));
-                headers.setContentLength(resource.contentLength());
-
-                return new ResponseEntity<>(resource, headers, HttpStatus.OK);
-            } else {
-                String errorMessage = "Only png, jpeg and gif image types are supported";
-                return ResponseEntity
-                        .badRequest()
-                        .body("{\"error\": \"" + errorMessage + "\"}");
-            }
+        if (size > 350 || size < 150) {
+            return wrongSize();
         }
-        String errorMessage = "Image size must be between 150 and 350 pixels";
-        return ResponseEntity
-                .badRequest()
-                .body("{\"error\": \"" + errorMessage + "\"}");
-    }
 
-    public BufferedImage createImage(String contents, int size) {
-        QRCodeWriter writer = new QRCodeWriter();
-        BufferedImage bufferedImage = null;
-
+        ErrorCorrectionLevel errorCorrectionLevel;
         try {
-            BitMatrix bitMatrix = writer.encode(contents, BarcodeFormat.QR_CODE, size, size);
-            bufferedImage = MatrixToImageWriter.toBufferedImage(bitMatrix);
-        } catch (WriterException e) {
-            e.printStackTrace();
+            errorCorrectionLevel = ErrorCorrectionLevel.valueOf(correction);
+        } catch (IllegalArgumentException e) {
+            String errorMessage = "Permitted error correction levels are L, M, Q, H";
+            return ResponseEntity.badRequest().body("{\"error\": \"" + errorMessage + "\"}");
         }
 
-        return bufferedImage;
+        if (!type.equals("png") && !type.equals("jpeg") && !type.equals("gif")) {
+            return wrongType();
+        }
+
+        BufferedImage bufferedImage = qrcodeService.createImage(contents, size, errorCorrectionLevel);
+
+
+        ByteArrayResource resource = qrcodeService.bufferedImageToByteArray(bufferedImage, type);
+
+        return qrcodeService.createHttpResponse(resource, type);
     }
+
 }
